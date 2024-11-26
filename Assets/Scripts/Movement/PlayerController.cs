@@ -9,12 +9,13 @@ public class PlayerController : MonoBehaviour
 
     [Header("References")]
     private Rigidbody rb;
-
     public Gun gc;
+    public CameraManager cm;
 
     [Header("Debugging")]
     public State currentState;
     public float currentSpeed;
+    
 
     [SerializeField]
     private Vector3 velocity;
@@ -34,7 +35,8 @@ public class PlayerController : MonoBehaviour
     private bool isSprinting;
     [SerializeField]
     private bool isRolling;
-
+    [SerializeField]
+    private bool hasJumped;
 
     [Header ("Controls")]
     [SerializeField]
@@ -51,6 +53,14 @@ public class PlayerController : MonoBehaviour
     private KeyCode rollKey;
     [SerializeField]
     private KeyCode shootKey;
+    [SerializeField]
+    private KeyCode reloadKey;
+    [SerializeField]
+    private KeyCode adsKey;
+    [SerializeField]
+    private KeyCode jumpKey;
+
+
 
     [Header ("Movement Stats")]
     public int walkSpeed;
@@ -59,6 +69,20 @@ public class PlayerController : MonoBehaviour
     
     public float maxSpeed;
 
+    public float jumpheight;
+
+
+    [Header("Ground Check")]
+    public bool isGrounded;
+
+    [SerializeField]
+    private Transform groundCheck;
+
+    [SerializeField]
+    private float groundCheckRadius = 0.2f;
+
+    [SerializeField]
+    private LayerMask groundLayer;
 
     public enum State
     {
@@ -149,12 +173,31 @@ public class PlayerController : MonoBehaviour
         } 
 
         /*
+         * JUMPING
+         */
+        if(Input.GetKeyDown(jumpKey) && isGrounded)
+        {
+            hasJumped = true;
+        }
+
+
+        /*
          * ATTACKING
          */
 
-        if(Input.GetMouseButton(0))
+        if(Input.GetKey(shootKey) && !gc.IsReloading())
         {
             gc.Fire();
+        }
+
+        // Handle ADS input
+        bool isAiming = Input.GetKey(adsKey);
+        gc.SetADS(isAiming);
+        cm.SetADS(isAiming);
+
+        if (Input.GetKeyDown(reloadKey)) // Replace with your reloadKey variable if defined
+        {
+            gc.TryReload();
         }
 
     }
@@ -162,11 +205,13 @@ public class PlayerController : MonoBehaviour
     private void FixedUpdate()
     {
         velocity = rb.velocity;
-
         currentSpeed = rb.velocity.magnitude;
 
         MovementHandler();
         ClampSpeed();
+        JumpHandler();
+        UpdateGroundedState();
+
     }
 
 
@@ -216,6 +261,31 @@ public class PlayerController : MonoBehaviour
         }
     }
 
+
+    // Handles the jumping logic
+    private void Jump()
+    {
+        rb.AddForce(Vector3.up * Mathf.Sqrt(jumpheight * 2f * Physics.gravity.magnitude), ForceMode.Impulse);
+    }
+
+
+    private void JumpHandler()
+    {
+        if (hasJumped && isGrounded)
+        {
+            Jump();
+            hasJumped = false; // Reset hasJumped after initiating a jump
+        }
+    }
+    private void UpdateGroundedState()
+    {
+        isGrounded = IsGrounded();
+    }
+
+    private bool IsGrounded()
+    {
+        return Physics.CheckSphere(groundCheck.position, groundCheckRadius, groundLayer);
+    }
 
 
     private void ClampSpeed()

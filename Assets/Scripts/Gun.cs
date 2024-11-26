@@ -10,39 +10,32 @@ public class Gun : MonoBehaviour
 
     [Header("Damage Stats")]
     public ushort damage;
-    public ushort rangeFirstCutoffDamageReduction;
-    public ushort rangeSecondCutoffDamageReduction;
+    public ushort firstDropoffDamage;
+    public ushort secondDropoffDamage;
 
     public ushort clipSize;
-    public ushort currentBulletCount; // Made public for UI access
+    public ushort currentBulletCount;
 
     [Header("Range Stats")]
     public ushort maxRange;
-    public ushort minRange;
-
-    public ushort rangeFirstCutoffDistance;
-    public ushort rangeSecondCutoffDistance;
+    public ushort firstDropOffRange;
+    public ushort secondDropOffRange;
 
     [Header("Speed Stats")]
     public float reloadSpeed; // Time taken to reload in seconds
-    public float fireRate; // Number of shots per second
+    public float fireRate;    // Number of shots per second
 
-    // Colors to alternate between for the ray
-    private Color[] bulletColors = { Color.green, Color.blue, Color.yellow, Color.red };
-    private byte currentColorIndex = 0; // Using byte for optimization
+    [Header("ADS Settings")]
+    public Transform adsPosition;         // Transform for the ADS position
+    public Transform defaultPosition;    // Transform for the default position
+    public float adsTransitionSpeed = 5f; // Speed of ADS transition
 
-    // Timer to control firing rate
-    private float nextTimeToFire = 0f;
-
+    private bool isADS = false;
     private bool isReloading = false;
 
-    // Line renderer for visualizing the raycast
-    private LineRenderer lineRenderer;
 
-    /*
-     *                                 DEBUGGING
-     * =======================================================================
-     */
+    private LineRenderer lineRenderer;
+    private float nextTimeToFire = 0f;
 
     void Start()
     {
@@ -53,7 +46,6 @@ public class Gun : MonoBehaviour
             Debug.LogError("Main camera not found!");
         }
 
-        // Initialize current bullet count to the full clip size
         currentBulletCount = clipSize;
 
         // Set up the line renderer
@@ -61,70 +53,104 @@ public class Gun : MonoBehaviour
         lineRenderer.startWidth = 0.02f;
         lineRenderer.endWidth = 0.02f;
         lineRenderer.material = new Material(Shader.Find("Unlit/Color"));
-        lineRenderer.material.color = bulletColors[currentColorIndex];
         lineRenderer.positionCount = 2;
         lineRenderer.enabled = false;
     }
 
     void Update()
     {
-
+        HandleADS();
     }
 
     public void Fire()
     {
         if (currentBulletCount <= 0)
         {
-            // Start the reload process if there are no bullets left
             StartCoroutine(Reload());
             return;
         }
 
-        // Check if the gun can fire based on the fire rate
         if (Time.time >= nextTimeToFire)
         {
-            // Update the next time the gun can fire
             nextTimeToFire = Time.time + 1f / fireRate;
-
-            // Reduce the current bullet count by 1
             currentBulletCount--;
 
-            // Cast a ray from the center of the camera outward
+            // Cast a ray from the camera outward
             Ray ray = new Ray(mainCamera.transform.position, mainCamera.transform.forward);
             RaycastHit hit;
 
-            // Draw the ray in the game view using LineRenderer
-            Vector3 endPosition = ray.origin + ray.direction * maxRange;
+            Vector3 hitPoint = ray.origin + ray.direction * maxRange;
 
             if (Physics.Raycast(ray, out hit, maxRange))
             {
-                endPosition = hit.point;
+                hitPoint = hit.point;
 
-                Debug.Log($"Hit: {hit.collider.name}");
+                // Calculate the distance from the gunTip to the hit point
+                float distance = Vector3.Distance(gunTip.position, hit.point);
 
-                // Check if the hit object has the "Hittable" layer or tag
-                if (hit.collider.gameObject.layer == LayerMask.NameToLayer("Hittable"))
-                {
-                    // Disable the hit game object
-                    hit.collider.gameObject.SetActive(false);
-                    Debug.Log($"Hittable object disabled: {hit.collider.name}");
-                }
+                // Call the Damage method with the hit object and distance
+                Damage(hit.collider.gameObject, distance);
             }
 
-            // Set the positions for the line renderer
-            lineRenderer.SetPosition(0, ray.origin);
-            lineRenderer.SetPosition(1, endPosition);
-            lineRenderer.startColor = bulletColors[currentColorIndex];
-            lineRenderer.endColor = bulletColors[currentColorIndex];
-            lineRenderer.enabled = true;
-
-            // Alternate the color for the next shot
-            currentColorIndex = (byte)((currentColorIndex + 1) % bulletColors.Length);
-
-            // Disable the line renderer after a short delay to simulate a shot
-            StartCoroutine(DisableLineRenderer());
+            // Update the line renderer for visuals
+            RenderBulletPath(hitPoint);
         }
     }
+
+    public void Damage(GameObject objHit, float distance)
+    {
+        ushort appliedDamage = 0;
+        int rangeCategory = 0;
+
+        // Determine the range category based on the distance
+        if (distance < firstDropOffRange)
+        {
+            rangeCategory = 0; // Within first drop-off range
+        }
+        else if (distance >= firstDropOffRange && distance < secondDropOffRange)
+        {
+            rangeCategory = 1; // Between first and second drop-off
+        }
+        else if (distance >= secondDropOffRange && distance <= maxRange)
+        {
+            rangeCategory = 2; // Between second drop-off and max range
+        }
+        else
+        {
+            rangeCategory = 3; // Beyond max range
+        }
+
+        // Use a switch statement to set the appropriate damage
+        switch (rangeCategory)
+        {
+            case 0:
+                appliedDamage = damage;
+                break;
+            case 1:
+                appliedDamage = firstDropoffDamage;
+                break;
+            case 2:
+                appliedDamage = secondDropoffDamage;
+                break;
+            default:
+                appliedDamage = 0; // No damage beyond max range
+                break;
+        }
+
+        // Apply damage if the object is hittable
+        if (objHit.layer == LayerMask.NameToLayer("Hittable"))
+        {
+            HealthManager health = objHit.GetComponent<HealthManager>();
+            if (health != null)
+            {
+                health.TakeDamage(appliedDamage);
+                Debug.Log($"you just hit: {objHit.name}. At a range of: {distance} Meters");
+            }
+        }
+    }
+
+
+
 
     private IEnumerator Reload()
     {
@@ -141,9 +167,48 @@ public class Gun : MonoBehaviour
         isReloading = false;
     }
 
+
+    public void TryReload()
+    {
+        if (isReloading || currentBulletCount == clipSize) return;
+
+        StartCoroutine(Reload());
+    }
+
+    public bool IsReloading()
+    {
+        return isReloading;
+    }
+
+
+    private void RenderBulletPath(Vector3 hitPoint)
+    {
+        // Set the start point at the gunTip and the end point at the hit location
+        lineRenderer.SetPosition(0, gunTip.position);
+        lineRenderer.SetPosition(1, hitPoint);
+
+        // Enable the line renderer and disable it after a short duration
+        lineRenderer.enabled = true;
+        StartCoroutine(DisableLineRenderer());
+    }
+
     private IEnumerator DisableLineRenderer()
     {
-        yield return new WaitForSeconds(0.1f); // Time the line is visible
+        yield return new WaitForSeconds(0.1f);
         lineRenderer.enabled = false;
+    }
+
+    public void SetADS(bool isAiming)
+    {
+        isADS = isAiming;
+    }
+
+    private void HandleADS()
+    {
+        // Determine the target position
+        Vector3 targetPosition = isADS ? adsPosition.localPosition : defaultPosition.localPosition;
+
+        // Smoothly transition to the target position
+        transform.localPosition = Vector3.Lerp(transform.localPosition, targetPosition, Time.deltaTime * adsTransitionSpeed);
     }
 }
